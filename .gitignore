@@ -76,7 +76,7 @@ target/
 .ipynb_checkpoints/
 
 # exclude data from source control by default
-/data/
+# /data/
 
 # Mac OS-specific storage files
 .DS_Store
@@ -89,14 +89,11 @@ target/
 .mypy_cache/
 
 # elegant
-*.ele
-*.lte
 
 # genesis
 *.distfile
 *.df
 *.par
-*.in
 *.out
 *visa_TD*
 
