@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+    <html>
+    <head>
+        <meta http-equiv="Content-type" content="text/html;charset=UTF-8">
+        <title>Particle distributions in elegant</title>
+        
+        <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/Microsoft/vscode/extensions/markdown-language-features/media/markdown.css">
+        <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/Microsoft/vscode/extensions/markdown-language-features/media/highlight.css">
+        
+        <style>
+.task-list-item { list-style-type: none; } .task-list-item-checkbox { margin-left: -20px; vertical-align: middle; }
+</style>
+        <style>
+            body {
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe WPC', 'Segoe UI', 'Ubuntu', 'Droid Sans', sans-serif;
+                font-size: 14px;
+                line-height: 1.6;
+            }
+        </style>
+        
+        
+    </head>
+    <body>
+        <h1 id="Particle-distributions-in-elegant">Particle distributions in elegant</h1>
+<p>The most straightforward way to generate a custom particle distribution compatible with elegant is to use elegant to create the initial <code>.sdds</code> file.</p>
+<p>The idea is to create an elegant run which only initializes the particle distribution and outputs to an <code>.sdds</code>. The <code>.ele</code> file specifies the distribution and output filenames, as well as the lattice file (<code>.lte</code>) to be used. The lattice file should probably be devoid of any elements. I thinkt the <code>WATCH</code> is necesary for the beamline to not be empty (elegant doesn't like that).</p>
+<ol>
+<li>Executing <code>elegant &lt;.ele filename&gt;</code>, creates an output file, say <code>init_ebeam.sdds</code></li>
+<li>Load <code>init_ebeam.sdds</code> and manipulate with numpy or however.
+<ol>
+<li><code>particle_dist_custom.py</code> is a python script that handles this manipulation.</li>
+<li>The python script outputs another <code>.sdds</code> file with the desired distribution.</li>
+</ol>
+</li>
+</ol>
+<p><code>sdds_beam</code> setup command allowing for the loading of an externally created or modified beam file.</p>
+<p>The beam file should contain the 6D phase space of the macro-particles.</p>
+<h2 id="genesis">genesis</h2>
+<p>Genesis input of 6D phase-space using the <code>DISTFILE</code> paramter. The distfile contains the 6D coordinates of the input particles for a single slice. The heading of the file must specify the genesis version in use, the charge of the beam, and the names of the columns. See the genesis manual for a (little) more detail. The distfile is an ASCII file and there should be spaces at the begining of each line, I think. Example of the structure inside the distfile (works so far).</p>
+<pre><code class="language-distfile"><div> ? VERSION = 1.3
+ ? CHARGE = 100E-12
+ ? COLUMNS P Z X Y PX PY
+  1.080775e+02   0.000000e+00   0.000000e+00  -3.493251e-06  -2.938962e-02  -3.332991e-02
+</div></code></pre>
+<p>Method for generating these files:</p>
+<ol>
+<li>Take the output of the <code>particle_dist_custom.py</code> script (or just the SDDS file you would like to import into genesis) and use the SDDS command <code>sddsprinout</code> to create a text file containing the columns needed.</li>
+<li>Change the heading of the file to that shown above.</li>
+</ol>
+<p>These couple of steps are included in <code>pyscript name here</code>.</p>
+
+    </body>
+    </html>

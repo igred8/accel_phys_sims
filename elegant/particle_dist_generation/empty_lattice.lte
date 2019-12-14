@@ -1,0 +1,5 @@
+! no lattice. just create a beam.
+
+W1: WATCH,FILENAME="%s-%03ld.w1"
+
+BL: LINE = ( W1 )
