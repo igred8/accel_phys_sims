@@ -87,3 +87,21 @@ target/
 
 # Mypy cache
 .mypy_cache/
+
+# elegant
+*.ele
+*.lte
+
+# genesis
+*.distfile
+*.df
+*.par
+*.in
+*.out
+*visa_TD*
+
+# pdf ppt
+*.pdf
+*.ppt
+*.pptx
+
