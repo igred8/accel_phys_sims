@@ -13,10 +13,53 @@ import subprocess
 import csv
 import re
 import numpy as np
+import scipy.constants as pc
 import pandas as pd
 
 # path of the module 
 file_path = os.path.dirname(os.path.abspath(__file__))
+
+#
+# === === === helper functions === === ===
+#
+
+def gaussian(x, mu, sig):
+    """ Gaussian
+    x - ndarray
+    mu - float. mean
+    sig - float. std dev
+    
+    """
+    y = (1 / (np.sqrt(2*pc.pi)  * sig)) * np.exp( - (x - mu)**2 / (2 * sig**2))
+    
+    return y
+
+def gaussianDx(x, mu, sig):
+    """ First derivative of a Gaussian. Normalized so that its maximum is 1.
+    x - ndarray
+    mu - float. mean
+    sig - float. std dev
+    
+    """
+    
+    y = (-(x - mu)/sig**2) * gaussian(x, mu, sig)
+    # NOTE: normalization to maximum value = 1
+    y = y/np.abs(y).max()
+    
+    return y
+
+def gaussianDx2(x, mu, sig):
+    """ Second derivative of a Gaussian (inverted sombrero). Normalized so that its maximum is 1.
+    x - ndarray
+    mu - float. mean
+    sig - float. std dev
+    
+    """
+    
+    y = ( -1/sig**2 + ((x - mu)/sig**2)**2 ) * gaussian(x, mu, sig)
+    # NOTE: normalization to maximum value = 1
+    y = y/np.abs(y).max()
+    return y
 
 
 
@@ -296,6 +339,60 @@ class GenOut():
             print('The genesis output file contains:'+
                 '\n{} columns\n{} pages\n{} z-records'.format(self.ncol, self.nslice, self.nzrec))
             print('==========')
+        
+        return 1
+
+    def calc_gain(self, ss=0, sig=1.0, nsig=6):
+        
+        """ Attempts to estimate the gain-length for the specified slice.
+
+        Convolve with d2(gaussian)/dx2 to simultaneously smooth and differentiate log(power). The output response will have a maximum at the beginning of the exponential gain and a minimum when saturation takes over and the gain diminishes. 
+        Make sure that the first and last points of response are dropped from the max/min search to avoid boundary effects from the filtering. This can be achieved by using mode='valid'
+        Mode ‘valid’ returns output of length max(M, N) - min(M, N) + 1.
+        
+        ss - int. the indexing number of the genesis slice. if there is only one slice, nslice=0 
+        sig=1.0, float. The width of the gaussianDx2 filter.
+        nsig=6, int. The width of the interval over which to compute the filter array.
+
+        """
+
+        # the log(P) signal
+        xvec = self.data[self.data.slice == ss].z.to_numpy()
+        yvec = np.log(self.data[self.data.slice == ss].power.to_numpy())
+
+        delz = np.abs(xvec[1] - xvec[0])
+        mu = 0
+        
+        xvecfilter = np.arange(-nsig*sig, nsig*sig, delz)
+        yvecfilter = gaussianDx2(xvecfilter, mu, sig)
+        nptsfilter = yvecfilter.shape[0]
+
+        # convolve
+        dy2vec = np.convolve(yvecfilter, yvec, mode='valid')
+        
+        # find min and max indecies and account for mode='valid'
+        
+        imax = dy2vec.argmax()
+        imin = dy2vec.argmin()
+        if imax.shape != ():
+            imax = imax[0]
+        if imin.shape != ():
+            imin = imin[0]
+        
+        imax = imax + int(nptsfilter/2)
+        imin = imin + int(nptsfilter/2)
+
+        if imax > imin:
+            print('Gain-length calculation failed. The max and min of the second derivative of log(power) are out of order. Power gain seems to be ill defined. ')
+            print('=====')
+            return 0
+        
+        # slope of log(P) = 1/Lgain
+        dyvec = (yvec[1:] - yvec[:-1]) / delz
+        gain = dyvec[imax:imin].mean()
+        lgain = 1 / gain
+
+        return nptsfilter, imax, imin, lgain
 
 class GenPar():
     """Class handles the import of genesis .par files.
