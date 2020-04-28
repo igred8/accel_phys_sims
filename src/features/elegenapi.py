@@ -7,7 +7,7 @@
 # 
 # ==========
 
-import sdds
+import sdds # only python 3.6 is supported for SDDS (2020.04.15)
 import os
 import subprocess
 import csv
@@ -282,6 +282,7 @@ class GenControl:
         
         # Note: It would be nice to indicate when genesis is done running. Currently, the console output is the only indication of running.
 
+
 class GenOut():
     """Class handles the import of genesis output files.
     Extracts and makes available relevant info like, number of z records, parameter names and values, etc.
@@ -393,6 +394,7 @@ class GenOut():
         lgain = 1 / gain
 
         return nptsfilter, imax, imin, lgain
+
 
 class GenPar():
     """Class handles the import of genesis .par files.
@@ -680,3 +682,97 @@ class ParticleDist():
             print('=====')
             print('genesis 6D filename\n>>> ' + gendistfilename)
             print('\n\n==========')
+
+#
+# === === === ICS LLNL code === === ===
+#
+
+class ICSControl():
+
+    def __init__(self):
+        self.FILENAME_ICS = ''
+
+    def run_ics(self, icspath, verbose=False):
+        """ Runs an instance of the ICS code from LLNL. 
+        There is an executable inside the folder `Compton_Code` named `Compton.exe`. The input file to that .exe must be in the same directory and named `Compton.ini`. 
+
+        icspath - str. directory path to the folder in which the relevant .ini file is located. The directory must also include the .exe file that runs the code.
+
+        This function effectively executes the following shell commands:
+            $ Compton.exe
+        """
+        # remember where the call is coming from
+        origincw = os.getcwd()
+        # step into the folder that contains the inital particle distributions
+        os.chdir(icspath)
+
+        # === Run `Compton.exe`. ===
+        if verbose:
+            print('Running `Compton.exe`.')
+
+        # list of commands executed outside python script
+        cmdlist = [
+            'Compton.exe'
+                    ]
+
+        for cmdstr in cmdlist:
+            if verbose:
+                print(cmdstr)
+                print('===')
+            subprocess.run(cmdstr, shell=True)
+
+        # get back to original CW
+        os.chdir(origincw)
+
+        return 0
+
+    # TODO: add more control, maybe parameter changes in ini file?
+
+    # TODO: class on importing and analyzing results from code
+    
+class ICSOut(object):
+
+    def __init__(self):
+        """ init class """
+
+    def load_data(self, filename):
+        """ Loads the specified file name as a pandas DF.
+        
+        TODO:
+         - make loading feature for different code calculations:
+            - angular flux
+            - total flux 
+            - energy spectrum
+            - ...
+
+        """
+        
+        return 0
+
+    def integrate_flux(self, anglespect, amin, amax, emin, emax):
+        """ Integrates the photon flux over angle and energy defined by the limits.
+        multiply by the differential crosssection 
+            in solid angle (2pi factor for the full phi range) 
+            and energy bandwidth (1e3 factor for keV to eV conversion)
+        anglespect - df with the angle energy and photon/mrad2/eV
+        
+        """
+        ntheta = anglespect.theta.nunique()
+        nenergy = anglespect.energy.nunique()
+        
+        # (mrad) differential element for integration over angle.
+        deltatheta = np.mean(np.abs( anglespect.theta.unique()[1:] - anglespect.theta.unique()[:-1] ))
+        # (kev) differential element for integration over energy
+        deltaenergy = np.mean(np.abs( anglespect.energy.unique()[1:] - anglespect.energy.unique()[:-1] ))
+        
+        angspectfilter = anglespect[
+                            (anglespect.theta >= amin) &
+                            (anglespect.theta <= amax) &
+                            (anglespect.energy >= emin) &
+                            (anglespect.energy <= emax)]
+        
+        # integrate the flux 
+        photonnumberinrange = 2 * pc.pi * deltatheta * deltaenergy * 1e3 * angspectfilter.counts.sum()
+        
+        return photonnumberinrange, angspectfilter
+        
