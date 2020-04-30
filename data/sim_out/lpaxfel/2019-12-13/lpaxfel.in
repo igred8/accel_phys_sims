@@ -51,7 +51,6 @@ $newrun
  SCAN = ZRAYL
  NSCAN = 1
  SVAR = 0.5
- OUTPUTFILE = 'lpaxfel_DF1_10'
+ OUTPUTFILE = 'lpaxfel_DF0_00'
  DGRID = 0.002
- DISTFILE = 'lpaxfel_dE1_BC0.distfile'
 $end
