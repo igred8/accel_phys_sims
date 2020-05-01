@@ -1,6 +1,6 @@
 # ==========
 #
-# Library of functions that aim to aid access and use to elegant and genesis1.3. 
+# Library of functions that aim to aid access and use to elegant, genesis1.3, and ICS code. 
 # Includes particle distribution manipulation functions. 
 # Able to work with SDDS IO. 
 # Deals with the difference in particle distribution definitions between elegant and genesis.
@@ -144,6 +144,7 @@ class GenControl:
 
         print('New input file was created\nfile name = '+inputfn)
         print('this was the `makeinfile` function. \nbye.')
+        return 0
 
     def param_set(self, inputfn, pnv, verbose=False):
         """ Set the parameter with name 'pname' to the value 'pvalue', inside the input filename 'inputfn'. Makes the changes inplace.
@@ -183,7 +184,7 @@ class GenControl:
         for pn in pnv.keys():
             # delete parameter if 'delete' and key is in dict 
             # (i.e. don't throw an error if parameter is already missing)
-            if (pnv[pn] == 'delete'):
+            if (str(pnv[pn]).lower() == 'delete'):
                 if (pn.upper() in in_dict):
                     del in_dict[pn.upper()]
                     if verbose:
@@ -201,10 +202,12 @@ class GenControl:
             fh.write('$end\n')
             fh.close()
             if verbose:
-                print('The input file : ' + inputfn + ' has been updated by the `paramSet` method.')
+                print('The input file : ' + inputfn + ' has been updated by the `.param_set()` method.')
             
         except:
-            print('`paramSet()` method has failed to write to `' + inputfn + '`.')
+            print('`.param_set()` method has failed to write to `' + inputfn + '`.')
+
+        return 0
 
 
     
@@ -229,7 +232,7 @@ class GenControl:
         with open(inputfn, 'r') as fout:
             oldin_text = fout.readlines()
         
-        # regex a pattern for the lines of the in file
+        # regex a pattern for the lines of the .in file
         pattern = re.compile(r'(\w*)\s*=\s*(.*)',re.IGNORECASE)
         # make a dict from in file
         in_dict = {}
@@ -691,6 +694,14 @@ class ICSControl():
 
     def __init__(self):
         self.FILENAME_ICS = ''
+        self.PARAMS_OK = []
+        try:
+            with open(file_path + r'\ics_accepted_param_names.txt', newline='') as fileok:
+                okreader = csv.reader(fileok, delimiter=' ', skipinitialspace=True)
+                for row in okreader:
+                    self.PARAMS_OK = self.PARAMS_OK + [row[0].upper().strip(', ')]
+        except FileNotFoundError:
+            print('file `ics_accepted_param_names.txt` is not present in the `../src/features` directory. This will effect error checking parameter names.')
 
     def run_ics(self, icspath, verbose=False):
         """ Runs an instance of the ICS code from LLNL. 
@@ -723,19 +734,177 @@ class ICSControl():
 
         # get back to original CW
         os.chdir(origincw)
+        
+        # NOTE: It would be nice to indicate when genesis is done running. Currently, the console output is the only indication of running.
 
         return 0
 
-    # TODO: add more control, maybe parameter changes in ini file?
+    def make_infile(self, inputfn):
+        """ 
+        
+        TODO:
+        Make an input file.
 
-    # TODO: class on importing and analyzing results from code
+
+        This features requires knowledge of which paramters are necessary for the code to run. As of now, this feature is not available.
+        
+        Specific parametrs can be edited with `.param_set()` .
+        """
+        print('Sorry. Currently, this feature is not available.')
+        return 0
+
+    def param_set(self, pnv, inputfn='Compton.ini', verbose=False):
+        """ Set the parameter with name 'pname' to the value 'pvalue', inside the input filename 'inputfn'. Makes the changes inplace.
+        
+        inputfn - str. 
+            The LLNL ICS code expects an input file that is named 'Compton.ini', so that is the default inputfn. 
+        `pnv` - dictionary of names and values for parameters:
+            pnv = dict([('pname0',pvalue0), ('pname1',pvalue1), ...])
+            pnv = {'pname0':pvalue0, 'pname0':pvalue0, ...}
+            'pname' is a str (should not be case sensitive)
+            'pvalue' type depends on the type that is expected by the parameter as per the LLNL input file.
+                'pvalue' can be set to 'delete' in order to remove the parameter
+
+        This feature is best suited for setting new values of parameters on the fly and executing genesis with them. For example, you would like to run a script that scans multiple genesis parameters.
+        If you are setting up a new genesis simulation after creating a template input file with `makeinfile()`, it could be more straight forward to open the .in file in a text editor and make your changes there. 
+        """
+
+        # Check validity of parameter names in pnv variable
+        for pn in pnv.keys():
+            if pn.upper() not in self.PARAMS_OK:
+                print('WARNING:\nThe parameter `' + pn + '` is not found in the list of accepted LLNL input parameters. ')
+        
+        # load the current version of the .ini file
+        with open(inputfn, 'r') as fout:
+            oldin_text = fout.readlines()
+        
+        # regex a pattern for the lines of the in file
+        pattern = re.compile(r'(\w*)\s*(.*)',re.IGNORECASE)
+        # make a dict from .ini file
+        in_dict = {}
+        for ii in oldin_text:
+            s = pattern.search(str(ii))
+            try:
+                # do not add the exiting string to the parameter dictionary
+                if str(s.group(1)) == 'EX':
+                    pass
+                else:
+                    # regex group(2) will have a different interpretation based on the parameter it defines. int, float, string, list of ints/floats.
+                    in_dict[str(s.group(1)).upper()] = s.group(2)
+
+            except AttributeError:
+                # catch exceptions to the regex pattern search+grouping
+                # should happen for commented out lines
+                print(s)
+                pass
+        
+        # update/delete the parameter value inside the dictionary
+        for pn in pnv.keys():
+            # delete parameter if 'delete' and key is in dict 
+            # (i.e. don't throw an error if parameter is already missing)
+            if (str(pnv[pn]).lower() == 'delete'):
+                if (pn.upper() in in_dict):
+                    del in_dict[pn.upper()]
+                    if verbose:
+                        print(pn.upper() + ' has been DELETED from input file.')
+            else:
+                # update the parameter value inplace based on type
+                if (type(pnv[pn]) is list) or (type(pnv[pn]) is np.ndarray):
+                    # format the list into a string with spaces
+                    liststring = str(pnv[pn]).strip('[ ]').replace(',',' ')
+                    in_dict[pn.upper()] = liststring
+                elif (type(pnv[pn]) is str):
+                    # add double quotes for strings, should only be for filenames
+                    in_dict[pn.upper()] = '"' + pnv[pn] + '"'
+                else:
+                    # just write the value
+                    in_dict[pn.upper()] = pnv[pn]
+                
+
+        # write to file given by inputfn
+        try:
+            fh = open(inputfn, 'w')
+            
+            for pn in in_dict.keys():
+                fh.write(pn.upper() + ' ' + str(in_dict[pn]) + '\n' )
+            fh.write('EX\n')
+            fh.close()
+            if verbose:
+                print('The input file : ' + inputfn + ' has been updated by the `.param_set()` method.')
+            
+        except:
+            print('`.param_set()` method has failed to write to `' + inputfn + '`.')
+
+        return 0
+
+
+    
+    def param_get(self, inputfn='Compton.ini', pnl='all'):
+        """ Get and return the value of the requested parameter inside the file given by filename.
+
+        inputfn - (str) path to the input file from which to get parameter value
+        pnl - (str) parameter names e.g. 'WAVELENGTH', e.g. ['wavelength', 'gen_part_basic', 'LBASE']
+        
+        This function loads the whole input file into memory and makes a dict out of the parameter names and parameter values. This could possibly be inefficient if a bunch of calls are made in succession. However, instead of that, the user should use a list of parameter names instead of calling the function multiple times.
+        """
+
+        # catch single string object instead of list of strings
+        if type(pnl) is not list: pnl = [ pnl ]
+
+        # Check validity of parameter names in pnl variable
+        for pn in pnl:
+            if (pn.upper() not in self.PARAMS_OK) and (pn != 'all'):
+                print('WARNING:\nThe parameter `' + pn + '` is not found in the list of accepted genesis input parameters. ')
+        
+        # load the current version of the .ini file
+        with open(inputfn, 'r') as fout:
+            oldin_text = fout.readlines()
+        
+        # regex a pattern for the lines of the .in file
+        pattern = re.compile(r'(\w*)\s*(.*)',re.IGNORECASE)
+        # make a dict from in file
+        in_dict = {}
+        for ii in oldin_text:
+            s = pattern.search(str(ii))
+            try:
+                # regex group(2) will have a different interpretation based on the parameter it defines. int, float, string, list of ints/floats.
+                in_dict[str(s.group(1)).upper()] = s.group(2)
+            except AttributeError:
+                # catch exceptions to the regex pattern search+grouping
+                # this should happen only for the $newrun and $end lines of a properly written in file.
+                pass
+        
+        # if any of the parameter names are 'all' then return all parameters
+        if 'all' in pnl:
+            return list(in_dict.values())
+        else:
+            pval = []
+            keyerrmsg = in_dict[pn.upper()] + ' was not found as a parameter in the input file: ' + inputfn
+            for pn in pnl:
+                try:
+                    pval = pval + [ in_dict[pn.upper()] ]
+                except KeyError as keyerrmsg:
+                    print(keyerrmsg)
+                    break
+                
+            return pval
+
+    
+    # TODO: add make ini file? This may not be that useful...
+
     
 class ICSOut(object):
 
     def __init__(self):
         """ init class """
 
-    def load_data(self, filename):
+
+        self.simdata = pd.DataFrame([])
+        self.ntheta = 0
+        self.nenergy = 0
+        self.ecentral = 0
+
+    def load_data(self, filename=None, mode='photon_ang_spect'):
         """ Loads the specified file name as a pandas DF.
         
         TODO:
@@ -747,32 +916,93 @@ class ICSOut(object):
 
         """
         
+        if mode == 'photon_ang_spect':
+            
+            if filename == None:
+                outputfn = 'Graph_Angle_Spectrum2.txt'
+            else:
+                outputfn = filename
+
+            colnames = ['theta', 'energy', 'flux']
+            self.simdata = pd.read_csv(outputfn, 
+                    delimiter='\s+', names=colnames, skiprows=1, dtype=np.float32)
+
+            # get the header line and extract the number of points in the theta and energy mesh
+            with open(outputfn,'r') as f:
+                headerline = f.readline().split()
+            print(headerline)
+
+            self.ntheta = np.float(headerline[-2])
+            self.nenergy = np.float(headerline[-1])
+
+            # extract the central energy
+            self.ecentral = (self.simdata['energy'][
+                (self.simdata['flux'] == self.simdata['flux'].max()) & 
+                (self.simdata['theta'] < 0.1*self.simdata['theta'].max())]
+                .mean() )
+
+        elif mode == 'energy_ang_spect':
+
+            if filename == None:
+                outputfn = 'Graph_Angle_Spectrum.txt'
+            else:
+                outputfn = filename
+
+            colnames = ['theta', 'energy', 'flux']
+            self.simdata = pd.read_csv(outputfn, 
+                    delimiter='\s+', names=colnames, skiprows=1, dtype=np.float32)
+
+            # get the header line and extract the number of points in the theta and energy mesh
+            with open(outputfn,'r') as f:
+                headerline = f.readline().split()
+            print(headerline)
+            self.ntheta = np.float(headerline[-2])
+            self.nenergy = np.float(headerline[-1])
+        
+        else:
+            print('ERROR: No simulation data loaded.')
+            print('Please specify the mode of the simulation output: {"photon_ang_spect", "energy_ang_spect"} ')
+            return 1
+
         return 0
 
-    def integrate_flux(self, anglespect, amin, amax, emin, emax):
-        """ Integrates the photon flux over angle and energy defined by the limits.
+    def integrate_flux(self, anglelims, energylims):
+        """ Integrates the photon/energy flux over angle and energy defined by the limits.
         multiply by the differential crosssection 
             in solid angle (2pi factor for the full phi range) 
             and energy bandwidth (1e3 factor for keV to eV conversion)
-        anglespect - df with the angle energy and photon/mrad2/eV
+        
+        self.simdata - df with the angle energy and photon/mrad^2/eV or keV/mrad^2/eV
+        anglelims - [angle_min, angle_max] integration limits for the off-axis angle
+        energylims - [energy_min, energy_max] integration limits for the photon energy
         
         """
-        ntheta = anglespect.theta.nunique()
-        nenergy = anglespect.energy.nunique()
-        
+                
         # (mrad) differential element for integration over angle.
-        deltatheta = np.mean(np.abs( anglespect.theta.unique()[1:] - anglespect.theta.unique()[:-1] ))
+        deltatheta = np.mean(
+                            np.abs(
+                                self.simdata['theta'].unique()[1:] - self.simdata['theta'].unique()[:-1] 
+                                )
+                            )
         # (kev) differential element for integration over energy
-        deltaenergy = np.mean(np.abs( anglespect.energy.unique()[1:] - anglespect.energy.unique()[:-1] ))
-        
-        angspectfilter = anglespect[
-                            (anglespect.theta >= amin) &
-                            (anglespect.theta <= amax) &
-                            (anglespect.energy >= emin) &
-                            (anglespect.energy <= emax)]
+        deltaenergy = np.mean(
+                            np.abs(
+                                self.simdata['energy'].unique()[1:] - self.simdata['energy'].unique()[:-1]
+                                )
+                            )
+
+        amin, amax = anglelims
+        emin, emax = energylims
+
+        # only take flux inside the specified limits
+        angspectfilter = self.simdata[
+                            (self.simdata['theta'] >= amin) &
+                            (self.simdata['theta'] <= amax) &
+                            (self.simdata['energy'] >= emin) &
+                            (self.simdata['energy'] <= emax)]
         
         # integrate the flux 
-        photonnumberinrange = 2 * pc.pi * deltatheta * deltaenergy * 1e3 * angspectfilter.counts.sum()
+        photonnumberinrange = 2 * pc.pi * deltatheta * deltaenergy * 1e3 * angspectfilter['flux'].sum()
         
         return photonnumberinrange, angspectfilter
         
