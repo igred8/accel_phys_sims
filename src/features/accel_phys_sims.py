@@ -495,8 +495,9 @@ class ParticleDist():
         self.ebeamnp = np.array([])
         self.colnames = ['x', 'xp', 'y', 'yp', 't', 'p', 'particleID']
         self.collookup = {self.colnames[ii]:ii for ii in range(len(self.colnames))}
+        self.data = pd.DataFrame([])
 
-    def load_sdds(self, sddsfilename):
+    def load_sdds(self, sddsfilename, makedf=True):
         """ loads a SDDS file class instance for custom 6d phas-space manipulation.
         sddsfilename - str. path of the sdds file being loaded. Can be an absolute path or just the filename if the current working directory contains the file.
 
@@ -510,6 +511,8 @@ class ParticleDist():
             self.ebeamsdds.load(sddsfilename)
             # convert to numpy array
             self.ebeamnp = np.array(self.ebeamsdds.columnData)
+            if makedf:
+                self.data = pd.DataFrame(self.ebeamnp, columns=self.colnames)
         except FileNotFoundError:
             print(sddsfilename + ' could not be found. Please check that the file is present in the specified directory.')
 
@@ -686,6 +689,43 @@ class ParticleDist():
             print('genesis 6D filename\n>>> ' + gendistfilename)
             print('\n\n==========')
 
+
+    def create_ics_distfile(self, sddsfilename, icsdistfilename, verbose=False):
+        """ Create a distfile for genesis input from the SDDS file given in sddsfilename.
+
+        The LBNL ICS code takes in a particle file that is has the rows: x (cm), dx/dz (mrad), y (cm), dy/dz (mrad), phase (deg), energy (MeV)
+
+        phase is the RF phase of the accelerator and it is used to specify the time of the particles as a position inside the RF wave. 
+        For a S-band accelerator we have:
+        f_RF = 2.8559 GHz
+        wavelength_RF = 10.47 cm
+
+        Transformation from a particle's z coordinate to phi:
+        phi = Mod( z / wavelength_RF - pi, 2pi ) - pi
+
+        """
+        # helper sddsprintout filename
+        sddsprintoutFilename = 'sdds_prinout.txt'
+        if os.path.isfile(sddsprintoutFilename):
+            pass
+        else:
+            print('=== === ===')
+            print('~~~!~!~!~~~')
+            print('Please make a temporary empty file named `sdds_printout.txt` inside the genesis output directory.\n Sorry for inconvenience. :[ ')
+            print('~~~!~!~!~~~')
+            print('=== === ===')
+        # these column names apply to a SDDS file that comes out of elegant
+        colnamesprintout = '(p,t,x,y,xp,yp)'
+        
+        # sddsprintout command call outside py script
+        cmdsddsprintout = 'sddsprintout ' + sddsfilename + ' ' + sddsprintoutFilename + ' -columns=' + colnamesprintout
+        print(cmdsddsprintout)
+        subprocess.run(cmdsddsprintout, shell=True)
+
+        # open the file from which to read data
+        fh_sddsprintout = open(sddsprintoutFilename,'r')
+
+
 #
 # === === === ICS LLNL code === === ===
 #
@@ -737,21 +777,7 @@ class ICSControl():
         
         # NOTE: It would be nice to indicate when genesis is done running. Currently, the console output is the only indication of running.
 
-        return 0
-
-    def make_infile(self, inputfn):
-        """ 
-        
-        TODO:
-        Make an input file.
-
-
-        This features requires knowledge of which paramters are necessary for the code to run. As of now, this feature is not available.
-        
-        Specific parametrs can be edited with `.param_set()` .
-        """
-        print('Sorry. Currently, this feature is not available.')
-        return 0
+        return 1
 
     def param_set(self, pnv, inputfn='Compton.ini', verbose=False):
         """ Set the parameter with name 'pname' to the value 'pvalue', inside the input filename 'inputfn'. Makes the changes inplace.
@@ -813,9 +839,7 @@ class ICSControl():
                     # format the list into a string with spaces
                     liststring = str(pnv[pn]).strip('[ ]').replace(',',' ')
                     in_dict[pn.upper()] = liststring
-                elif (type(pnv[pn]) is str):
-                    # add double quotes for strings, should only be for filenames
-                    in_dict[pn.upper()] = '"' + pnv[pn] + '"'
+                
                 else:
                     # just write the value
                     in_dict[pn.upper()] = pnv[pn]
@@ -835,10 +859,8 @@ class ICSControl():
         except:
             print('`.param_set()` method has failed to write to `' + inputfn + '`.')
 
-        return 0
-
-
-    
+        return 1
+        
     def param_get(self, inputfn='Compton.ini', pnl='all'):
         """ Get and return the value of the requested parameter inside the file given by filename.
 
@@ -895,17 +917,24 @@ class ICSControl():
     
 class ICSOut(object):
 
-    def __init__(self):
+    def __init__(self, filename=None):
         """ init class """
 
+        if filename:
+            self.filename = filename
+        else:
+            self.filename = ''
 
         self.simdata = pd.DataFrame([])
         self.ntheta = 0
         self.nenergy = 0
-        self.ecentral = 0
+        self.ecentral = 0 # xray energy with maximum flux for angles close to axis 0.1*max(theta)
+        self.photons_per_ev = np.array([]) # xray spectrum (inegrated flux over angles)
+        self.photons_per_mrad = np.array([]) # xray angular distribution (integrated flux over energy)
 
-    def load_data(self, filename=None, mode='photon_ang_spect'):
-        """ Loads the specified file name as a pandas DF.
+    def load_data(self, filename=None, mode='photon_ang_spect', verbose=False):
+        """ Loads the specified file name as a pandas DF and updats;
+        .ntheta, .nenergy 
         
         TODO:
          - make loading feature for different code calculations:
@@ -918,10 +947,13 @@ class ICSOut(object):
         
         if mode == 'photon_ang_spect':
             
-            if filename == None:
+            if (filename == None) & (self.filename == ''):
                 outputfn = 'Graph_Angle_Spectrum2.txt'
+            elif (filename == None) & (self.filename != ''):
+                outputfn = self.filename
             else:
                 outputfn = filename
+                self.filename = outputfn
 
             colnames = ['theta', 'energy', 'flux']
             self.simdata = pd.read_csv(outputfn, 
@@ -930,23 +962,24 @@ class ICSOut(object):
             # get the header line and extract the number of points in the theta and energy mesh
             with open(outputfn,'r') as f:
                 headerline = f.readline().split()
-            print(headerline)
+            
+            if verbose:
+                print(headerline)
 
             self.ntheta = np.float(headerline[-2])
             self.nenergy = np.float(headerline[-1])
 
-            # extract the central energy
-            self.ecentral = (self.simdata['energy'][
-                (self.simdata['flux'] == self.simdata['flux'].max()) & 
-                (self.simdata['theta'] < 0.1*self.simdata['theta'].max())]
-                .mean() )
 
         elif mode == 'energy_ang_spect':
 
-            if filename == None:
+            if (filename == None) & (self.filename == ''):
                 outputfn = 'Graph_Angle_Spectrum.txt'
+            elif (filename == None) & (self.filename != ''):
+                outputfn = self.filename
             else:
                 outputfn = filename
+                self.filename = outputfn
+
 
             colnames = ['theta', 'energy', 'flux']
             self.simdata = pd.read_csv(outputfn, 
@@ -955,18 +988,21 @@ class ICSOut(object):
             # get the header line and extract the number of points in the theta and energy mesh
             with open(outputfn,'r') as f:
                 headerline = f.readline().split()
-            print(headerline)
+            
+            if verbose:
+                print(headerline)
+            
             self.ntheta = np.float(headerline[-2])
             self.nenergy = np.float(headerline[-1])
         
         else:
             print('ERROR: No simulation data loaded.')
             print('Please specify the mode of the simulation output: {"photon_ang_spect", "energy_ang_spect"} ')
-            return 1
+            return 0
 
-        return 0
+        return 1
 
-    def integrate_flux(self, anglelims, energylims):
+    def integrate_flux(self, anglelims, energylims, jacobian='sphere'):
         """ Integrates the photon/energy flux over angle and energy defined by the limits.
         multiply by the differential crosssection 
             in solid angle (2pi factor for the full phi range) 
@@ -975,34 +1011,167 @@ class ICSOut(object):
         self.simdata - df with the angle energy and photon/mrad^2/eV or keV/mrad^2/eV
         anglelims - [angle_min, angle_max] integration limits for the off-axis angle
         energylims - [energy_min, energy_max] integration limits for the photon energy
+        jacobian = 'cart', 'sphere' specifies the integration jacobian
+            if 'sphere' -> sin(theta) dtheta dphi
+            if 'cart' -> dtheta dphi (!!!not correct for most cases!!!)
         
         """
                 
-        # (mrad) differential element for integration over angle.
-        deltatheta = np.mean(
-                            np.abs(
-                                self.simdata['theta'].unique()[1:] - self.simdata['theta'].unique()[:-1] 
-                                )
-                            )
-        # (kev) differential element for integration over energy
-        deltaenergy = np.mean(
-                            np.abs(
-                                self.simdata['energy'].unique()[1:] - self.simdata['energy'].unique()[:-1]
-                                )
-                            )
+        # integrate over angles
+        spect_en = self.calc_spectrum(anglelims=anglelims,energylims=energylims, jacobian=jacobian, updateself=False)
+        
+        envec = spect_en[:,0]
+        spectvec = spect_en[:,1]
 
+        try:
+            # differential element vector
+            delenvec = np.abs(envec[1:] - envec[:-1])
+            delenvec = np.append(delenvec, delenvec[-1]) # make same length
+        
+            photonnumberinrange = np.sum(spectvec * delenvec * 1e3)
+            
+            return photonnumberinrange
+
+        except IndexError:
+            print('ERROR: Not enough resolution in energy for integration.')
+            print('integrated flux is zero')
+            return 0.0
+
+    def calc_spectrum(self, anglelims, energylims=None, jacobian='sphere',updateself=True):
+        """ Integrates the photon/energy flux over angles defined by the limits.
+        
+        multiply by the differential crosssection 
+            in solid angle (2pi factor for the full phi range) 
+            and energy bandwidth (1e3 factor for keV to eV conversion)
+        
+        self.simdata - df with the angle energy and photon/mrad^2/eV or keV/mrad^2/eV
+        anglelims - [angle_min, angle_max] integration limits for the off-axis angle
+        energylims=None, [energy_min, energy_max] cut-off limits for the photon energy. If `None`, no cut is made on the energy
+        
+        jacobian = 'cart', 'sphere' specifies the integration jacobian
+            if 'sphere' -> sin(theta) dtheta dphi
+            if 'cart' -> dtheta dphi (!!!not correct for most cases!!!)
+        updateself - True, flag to update the self attribute photons_per_ev
+        """
         amin, amax = anglelims
-        emin, emax = energylims
+        # apply angular cut
+        simdf_angcut = (self.simdata[
+                            (self.simdata['theta'] >= amin) 
+                            & (self.simdata['theta'] <= amax)]
+                            )
 
-        # only take flux inside the specified limits
-        angspectfilter = self.simdata[
-                            (self.simdata['theta'] >= amin) &
-                            (self.simdata['theta'] <= amax) &
-                            (self.simdata['energy'] >= emin) &
-                            (self.simdata['energy'] <= emax)]
+        # apply energy cut if supplied and define envec
+        if energylims:
+            emin, emax = energylims
+            simdf_cut = (self.simdata
+                            [(self.simdata['energy'] >= emin) 
+                            & (self.simdata['energy'] <= emax)]
+                            )
+            envec = simdf_cut['energy'].unique()
+
+        else:
+            simdf_cut = simdf_angcut
+            envec = simdf_cut['energy'].unique()
+
+        # init output array
+        photons_sumoverangles = np.zeros( (len(envec), 2) )
+        photons_sumoverangles[:,0] = envec
         
-        # integrate the flux 
-        photonnumberinrange = 2 * pc.pi * deltatheta * deltaenergy * 1e3 * angspectfilter['flux'].sum()
+        for i, en in enumerate(envec):
+
+            # theta vector
+            thvec = (simdf_cut
+                        ['theta']
+                        [simdf_cut['energy'] == en]
+                        .to_numpy()
+                        )
+            # differential element
+            delthvec = np.abs(thvec[1:] - thvec[:-1])
+            delthvec = np.append(delthvec, delthvec[-1]) # make it the same length as thvec
+
+            if jacobian == 'sphere':
+                jacobian_factor = 2 * pc.pi * np.sin(thvec) * delthvec
+            elif jacobian == 'cart':
+                jacobian_factor = 2 * pc.pi * delthvec
+            else:
+                print('WARNING! Invalid Jacobian setting provided by user. Integration will be performed with the default settin: jacobian="sphere". This setting can be changed to "cart" to remove the factor of sin(theta)')
+                jacobian_factor = 2 * pc.pi * np.sin(thvec) * delthvec
+            
+            # temp flux vector for the energy, en
+            fluxvec = simdf_cut['flux'][simdf_cut['energy'] == en]
+            
+            # sum over flux vec with the jacobian factor
+            photons_sumoverangles[i, 1] = np.sum(jacobian_factor * fluxvec)
+
+        if updateself:
+            # update .intspect
+            self.photons_per_ev = photons_sumoverangles
+
+        return photons_sumoverangles
+
+    def calc_angdist(self, energylims, anglelims=None):
+        """ Integrates the photon/energy flux over angles defined by the limits.
         
-        return photonnumberinrange, angspectfilter
+        multiply by the differential crosssection 
+            in solid angle (2pi factor for the full phi range) 
+            and energy bandwidth (1e3 factor for keV to eV conversion)
         
+        self.simdata - df with the angle energy and photon/mrad^2/eV or keV/mrad^2/eV
+        anglelims - [angle_min, angle_max] integration limits for the off-axis angle
+        energylims=None, [energy_min, energy_max] cut-off limits for the photon energy. If `None`, no cut is made on the energy
+        
+        jacobian = 'cart', 'sphere' specifies the integration jacobian
+            if 'sphere' -> sin(theta) dtheta dphi
+            if 'cart' -> dtheta dphi (!!!not correct for most cases!!!)
+            
+        """
+
+
+        emin, emax = energylims
+        # apply cut on energy
+        simdf_encut = (self.simdata
+                        [(self.simdata['energy'] >= emin) 
+                        & (self.simdata['energy'] <= emax)]
+                        )
+
+        # apply angular cut if supplied and define thvec
+        if anglelims:
+            amin, amax = anglelims
+            simdf_cut = (simdf_encut
+                        ['theta']
+                        [(self.simdata['theta'] >= amin) 
+                        & (self.simdata['theta'] <= amax)]
+                        )
+            # vector of theta angles
+            thvec = simdf_cut.unique()
+
+        else:
+            simdf_cut = simdf_encut
+            thvec = simdf_cut['theta'].unique()
+
+        # init output array
+        photons_sumoverenergy = np.zeros( (len(thvec), 2) )
+        photons_sumoverenergy[:,0] = thvec
+
+        for i, th in enumerate(thvec):
+
+            # energy vector
+            envec = (simdf_cut
+                        ['energy']
+                        [simdf_cut['theta'] == th]
+                        .to_numpy()
+                        )
+            delenvec = np.abs(envec[1:] - envec[:-1])
+            delenvec = np.append(delenvec, delenvec[-1]) # make the same len as envec
+
+            # temp flux vector for theta
+            fluxvec = simdf_cut['flux'][simdf_cut['theta'] == th]
+
+            # sum over fluxvec with differential element
+            photons_sumoverenergy[i,1] = np.sum(delenvec * fluxvec)
+
+        # update .photons_per_mrad
+        self.photons_per_mrad = photons_sumoverenergy
+
+        return photons_sumoverenergy
+
