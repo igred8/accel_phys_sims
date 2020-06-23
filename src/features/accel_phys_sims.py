@@ -1,6 +1,6 @@
 # ==========
 #
-# Library of functions that aim to aid access and use to elegant and genesis1.3. 
+# Library of functions that aim to aid access and use to elegant, genesis1.3, and ICS code. 
 # Includes particle distribution manipulation functions. 
 # Able to work with SDDS IO. 
 # Deals with the difference in particle distribution definitions between elegant and genesis.
@@ -144,6 +144,7 @@ class GenControl:
 
         print('New input file was created\nfile name = '+inputfn)
         print('this was the `makeinfile` function. \nbye.')
+        return 0
 
     def param_set(self, inputfn, pnv, verbose=False):
         """ Set the parameter with name 'pname' to the value 'pvalue', inside the input filename 'inputfn'. Makes the changes inplace.
@@ -183,7 +184,7 @@ class GenControl:
         for pn in pnv.keys():
             # delete parameter if 'delete' and key is in dict 
             # (i.e. don't throw an error if parameter is already missing)
-            if (pnv[pn] == 'delete'):
+            if (str(pnv[pn]).lower() == 'delete'):
                 if (pn.upper() in in_dict):
                     del in_dict[pn.upper()]
                     if verbose:
@@ -201,10 +202,12 @@ class GenControl:
             fh.write('$end\n')
             fh.close()
             if verbose:
-                print('The input file : ' + inputfn + ' has been updated by the `paramSet` method.')
+                print('The input file : ' + inputfn + ' has been updated by the `.param_set()` method.')
             
         except:
-            print('`paramSet()` method has failed to write to `' + inputfn + '`.')
+            print('`.param_set()` method has failed to write to `' + inputfn + '`.')
+
+        return 0
 
 
     
@@ -229,7 +232,7 @@ class GenControl:
         with open(inputfn, 'r') as fout:
             oldin_text = fout.readlines()
         
-        # regex a pattern for the lines of the in file
+        # regex a pattern for the lines of the .in file
         pattern = re.compile(r'(\w*)\s*=\s*(.*)',re.IGNORECASE)
         # make a dict from in file
         in_dict = {}
@@ -492,8 +495,9 @@ class ParticleDist():
         self.ebeamnp = np.array([])
         self.colnames = ['x', 'xp', 'y', 'yp', 't', 'p', 'particleID']
         self.collookup = {self.colnames[ii]:ii for ii in range(len(self.colnames))}
+        self.ebeamdf = pd.DataFrame([])
 
-    def load_sdds(self, sddsfilename):
+    def load_sdds(self, sddsfilename, makedf=True):
         """ loads a SDDS file class instance for custom 6d phas-space manipulation.
         sddsfilename - str. path of the sdds file being loaded. Can be an absolute path or just the filename if the current working directory contains the file.
 
@@ -505,14 +509,44 @@ class ParticleDist():
         try:
             # load the beam SDDS file
             self.ebeamsdds.load(sddsfilename)
+            # update colnames
+            self.colnames = list( self.ebeamsdds.columnName )
+            # update collookup
+            self.collookup = {self.colnames[ii]:ii for ii in range(len(self.colnames))}
             # convert to numpy array
             self.ebeamnp = np.array(self.ebeamsdds.columnData)
+
+            # add a pandas DF with the SDDS data. easier to use than np
+            if makedf:
+                try:
+                    nsnapshots = self.ebeamnp.shape[1]
+                    colnamesdf = list(self.colnames)
+                    colnamesdf.append('snap')
+
+                    for snap in range(nsnapshots):
+                        svec = snap * np.ones((self.ebeamnp.shape[-1],1))
+                        arrtemp = np.hstack( ( np.transpose(self.ebeamnp[:,snap,:]), svec ) )
+                        dftemp = pd.DataFrame(arrtemp, columns=colnamesdf)
+                        self.ebeamdf = self.ebeamdf.append(dftemp, ignore_index=True)
+                except:
+                    print('ERROR! Conversion to pandas DF failed.')
+                    print('The numpy array in `self.ebeamnp` should still be OK.')
+                    print('Check that SDDS output is properly dimensioned.')
+                    return 1
+
+
         except FileNotFoundError:
             print(sddsfilename + ' could not be found. Please check that the file is present in the specified directory.')
+            return 1
+
+        return 0
 
     def xE_parabola(self, ascale=0.12, momres=138.5, momoffset=0.0, absx=False,zeropx=True):
         """ Creates a parabolic correlation between the x position and relative energy of the ebeam macro-particles. 
         
+        NEEDS numpy array of particle data!
+        ACTS on self.ebeamnp and self.ebeamsdds
+
         ascale - float. parabola scale
         momres - float. the resonant momentum inside the FEL
         momoffset - float. offset of the parabola. 
@@ -558,8 +592,13 @@ class ParticleDist():
         for col in self.colnames:
             self.ebeamsdds.setColumnValueLists(col, [self.ebeamnp[self.collookup[col], 0, :].tolist()] )
 
+        return 0
+
     def xE_condition(self, ascale=0.12, momres=138.5, momoffset=0.0,absx=False,zeropx=True):
         """ Creates a correlation between the x position and relative energy of the ebeam macro-particles. The formula is derived from equating the de-phasing (slippage) due to energy spread to the added path-length from the betatron oscillations in the strong FODO lattice. The equation is:
+                
+        NEEDS numpy array of particle data!
+        ACTS on self.ebeamnp and self.ebeamsdds
 
         ascale - float. parabola scale
         momres - float. the resonant momentum inside the FEL
@@ -608,29 +647,48 @@ class ParticleDist():
         for col in self.colnames:
             self.ebeamsdds.setColumnValueLists(col, [self.ebeamnp[self.collookup[col], 0, :].tolist()] )
 
+        return 0
 
-    def save_sdds(self, outputfilename, genpscale=True):
-        """ Saves the current self.ebeamsdds to SDDS file.
-        Apllies energy scaling if the distribution will be used for genesis.
-        The difference is in the transverse momentum definitions. Elegant uses x' and y' which are just angles (i.e. x' = beta_x / beta). Genesis uses the transverse momentum in units of mc (i.e. px = gamma*beta_x = p*x', where p is the elegant momentum).
+    def format_dist(self, mode='ele', rffreq=None, verbose=False):
+        """ 
+        mode - {'ele', 'gen', 'ics'}
+            self.ebeamdf is assumed to be in elegant format.
+            ACTS on self.ebeamdf.
+
+            'ele' - default. Leaves particle distribution formated for elegant use. 
+            'gen' - Apllies energy scaling to be used for genesis.
+            Updates .ebeamsdds and .ebeamnp.
+            The difference is in the transverse momentum definitions. Elegant uses x' and y' which are just angles (i.e. x' = beta_x / beta). Genesis uses the transverse momentum in units of mc (i.e. px = gamma*beta_x = p*x', where p is the elegant momentum).
+            'ics' - Converts the elegant output to 6D distribution compatible with the LLNL ICS code.
+            Updates .ebeamsdds and .ebeamnp.
+            The main difference is that ICS code uses RF phase for the longitudinal coordinate and x and y positions are in centimeters.
+            rffreq =None. if mode=='ics', then rffreq defines the RF frequency of the accelerating RF structure. This is left over from Parmela input into the ICS code. If .save_sdds() is called with mode='ics' and no rffreq, then the defaul tvalue of an S-band RF accelerator will be used: rffreq = 2.8559e9.
+            Column names will be changed to match ICS code.
+
         """
-        if genpscale:
+        if mode == 'gen':
             # print('inside genpscale -----')
-            self.ebeamnp[self.collookup['xp'],0,:] = (
-                self.ebeamnp[self.collookup['p'],0,:] 
-                * self.ebeamnp[self.collookup['xp'],0,:] 
-                )
-            self.ebeamnp[self.collookup['yp'],0,:] = (
-                self.ebeamnp[self.collookup['p'],0,:] 
-                * self.ebeamnp[self.collookup['yp'],0,:]
-                )
-        # update the sdds holder for the 6D phase-space
-        for col in self.colnames:
-            self.ebeamsdds.setColumnValueLists(col, [self.ebeamnp[self.collookup[col], 0, :].tolist()] )
+            self.ebeamdf['xp'] = self.ebeamdf['p'] * self.ebeamdf['xp']
+            self.ebeamdf['yp'] = self.ebeamdf['p'] * self.ebeamdf['yp']
+            if verbose:
+                print('.ebeamdf was modified to be compatible with genesis.')
+        elif mode == 'ics':
+            # output to 6D dist for LLNL ICS code
+            # convert postion to centimeters
+            self.ebeamdf['x'] = 100.0 * self.ebeamdf['x']
+            self.ebeamdf['y'] = 100.0 * self.ebeamdf['y']
 
-        # save to outputfilename
-        self.ebeamsdds.save(outputfilename)
-
+            if rffreq is None:
+                rffreq = 2.8550e9 # Hz frequency of S-band linac
+            rfwl = pc.c / rffreq
+            self.ebeamdf['t'] = ((self.ebeamdf['t'] * pc.c / rfwl) - pc.pi) % (2*pc.pi) - pc.pi
+            self.ebeamdf = self.ebeamdf.rename(columns={'t':'phi', 
+                                                        'p':'w',
+                                                        'particleID':'particle #'})
+            if verbose:
+                print('.ebeamdf was modified to be compatible with LLNL ICS code (W. Brown).')
+            
+        return 0
     
     def create_genesis_distfile(self, sddsfilename, gendistfilename,charge=1200e-12, verbose=False):
         """ Create a distfile for genesis input from the SDDS file given in sddsfilename.
@@ -645,9 +703,12 @@ class ParticleDist():
             print('Please make a temporary empty file named `sdds_printout.txt` inside the genesis output directory.\n Sorry for inconvenience. :[ ')
             print('~~~!~!~!~~~')
             print('=== === ===')
+            return 1
+
         # these column names apply to a SDDS file that comes out of elegant
         colnamesprintout = '(p,t,x,y,xp,yp)'
         
+        # print out SDDS into a table text
         # sddsprintout command call outside py script
         cmdsddsprintout = 'sddsprintout ' + sddsfilename + ' ' + sddsprintoutFilename + ' -columns=' + colnamesprintout
         print(cmdsddsprintout)
@@ -682,6 +743,47 @@ class ParticleDist():
             print('=====')
             print('genesis 6D filename\n>>> ' + gendistfilename)
             print('\n\n==========')
+        
+        return 0
+
+    def create_ics_distfile(self, icsdistfilename, verbose=False):
+        """ 
+        The LBNL ICS code takes in a particle file that is has the rows: x (cm), dx/dz (mrad), y (cm), dy/dz (mrad), phase (deg), energy (MeV)
+
+        phase is the RF phase of the accelerator and it is used to specify the time of the particles as a position inside the RF wave. 
+        For a S-band accelerator we have:
+        f_RF = 2.8559 GHz
+        wavelength_RF = 10.47 cm
+
+        Transformation from a particle's z coordinate to phi:
+        phi = Mod( z / wavelength_RF - pi, 2pi ) - pi
+
+        """
+        # save the DF to file
+        coltowrite = self.ebeamdf.columns.to_list()[:-1]
+        self.ebeamdf.to_csv(icsdistfilename+'temp', sep='\t', columns=coltowrite)
+
+        # number of particles needed for ICS code header
+        numpart = self.ebeamdf[self.ebeamdf['snap']==0.0].shape[0]
+
+        # open the file from which to read data
+        fh_csvtemp = open(icsdistfilename+'temp','r')
+
+        with open(icsdistfilename, mode='w') as icsDist:
+            icsDist.write(' numbuf= {:d}\n'.format(numpart))
+            for row in fh_csvtemp:
+                icsDist.write(row) #don't need a '\n' newline here
+                
+        # close the read file
+        fh_csvtemp.close()
+
+        if verbose:
+            print('=====')
+            print('LLNL ICS code 6D filename\n>>> ' + icsdistfilename)
+            print('\n\n==========')
+
+        return 0
+
 
 #
 # === === === ICS LLNL code === === ===
@@ -691,6 +793,14 @@ class ICSControl():
 
     def __init__(self):
         self.FILENAME_ICS = ''
+        self.PARAMS_OK = []
+        try:
+            with open(file_path + r'\ics_accepted_param_names.txt', newline='') as fileok:
+                okreader = csv.reader(fileok, delimiter=' ', skipinitialspace=True)
+                for row in okreader:
+                    self.PARAMS_OK = self.PARAMS_OK + [row[0].upper().strip(', ')]
+        except FileNotFoundError:
+            print('file `ics_accepted_param_names.txt` is not present in the `../src/features` directory. This will effect error checking parameter names.')
 
     def run_ics(self, icspath, verbose=False):
         """ Runs an instance of the ICS code from LLNL. 
@@ -723,20 +833,167 @@ class ICSControl():
 
         # get back to original CW
         os.chdir(origincw)
+        
+        # NOTE: It would be nice to indicate when genesis is done running. Currently, the console output is the only indication of running.
 
-        return 0
+        return 1
 
-    # TODO: add more control, maybe parameter changes in ini file?
+    def param_set(self, pnv, inputfn='Compton.ini', verbose=False):
+        """ Set the parameter with name 'pname' to the value 'pvalue', inside the input filename 'inputfn'. Makes the changes inplace.
+        
+        inputfn - str. 
+            The LLNL ICS code expects an input file that is named 'Compton.ini', so that is the default inputfn. 
+        `pnv` - dictionary of names and values for parameters:
+            pnv = dict([('pname0',pvalue0), ('pname1',pvalue1), ...])
+            pnv = {'pname0':pvalue0, 'pname0':pvalue0, ...}
+            'pname' is a str (should not be case sensitive)
+            'pvalue' type depends on the type that is expected by the parameter as per the LLNL input file.
+                'pvalue' can be set to 'delete' in order to remove the parameter
 
-    # TODO: class on importing and analyzing results from code
+        This feature is best suited for setting new values of parameters on the fly and executing genesis with them. For example, you would like to run a script that scans multiple genesis parameters.
+        If you are setting up a new genesis simulation after creating a template input file with `makeinfile()`, it could be more straight forward to open the .in file in a text editor and make your changes there. 
+        """
+
+        # Check validity of parameter names in pnv variable
+        for pn in pnv.keys():
+            if pn.upper() not in self.PARAMS_OK:
+                print('WARNING:\nThe parameter `' + pn + '` is not found in the list of accepted LLNL input parameters. ')
+        
+        # load the current version of the .ini file
+        with open(inputfn, 'r') as fout:
+            oldin_text = fout.readlines()
+        
+        # regex a pattern for the lines of the in file
+        pattern = re.compile(r'(\w*)\s*(.*)',re.IGNORECASE)
+        # make a dict from .ini file
+        in_dict = {}
+        for ii in oldin_text:
+            s = pattern.search(str(ii))
+            try:
+                # do not add the exiting string to the parameter dictionary
+                if str(s.group(1)) == 'EX':
+                    pass
+                else:
+                    # regex group(2) will have a different interpretation based on the parameter it defines. int, float, string, list of ints/floats.
+                    in_dict[str(s.group(1)).upper()] = s.group(2)
+
+            except AttributeError:
+                # catch exceptions to the regex pattern search+grouping
+                # should happen for commented out lines
+                print(s)
+                pass
+        
+        # update/delete the parameter value inside the dictionary
+        for pn in pnv.keys():
+            # delete parameter if 'delete' and key is in dict 
+            # (i.e. don't throw an error if parameter is already missing)
+            if (str(pnv[pn]).lower() == 'delete'):
+                if (pn.upper() in in_dict):
+                    del in_dict[pn.upper()]
+                    if verbose:
+                        print(pn.upper() + ' has been DELETED from input file.')
+            else:
+                # update the parameter value inplace based on type
+                if (type(pnv[pn]) is list) or (type(pnv[pn]) is np.ndarray):
+                    # format the list into a string with spaces
+                    liststring = str(pnv[pn]).strip('[ ]').replace(',',' ')
+                    in_dict[pn.upper()] = liststring
+                
+                else:
+                    # just write the value
+                    in_dict[pn.upper()] = pnv[pn]
+                
+
+        # write to file given by inputfn
+        try:
+            fh = open(inputfn, 'w')
+            
+            for pn in in_dict.keys():
+                fh.write(pn.upper() + ' ' + str(in_dict[pn]) + '\n' )
+            fh.write('EX\n')
+            fh.close()
+            if verbose:
+                print('The input file : ' + inputfn + ' has been updated by the `.param_set()` method.')
+            
+        except:
+            print('`.param_set()` method has failed to write to `' + inputfn + '`.')
+
+        return 1
+        
+    def param_get(self, inputfn='Compton.ini', pnl='all'):
+        """ Get and return the value of the requested parameter inside the file given by filename.
+
+        inputfn - (str) path to the input file from which to get parameter value
+        pnl - (str) parameter names e.g. 'WAVELENGTH', e.g. ['wavelength', 'gen_part_basic', 'LBASE']
+        
+        This function loads the whole input file into memory and makes a dict out of the parameter names and parameter values. This could possibly be inefficient if a bunch of calls are made in succession. However, instead of that, the user should use a list of parameter names instead of calling the function multiple times.
+        """
+
+        # catch single string object instead of list of strings
+        if type(pnl) is not list: pnl = [ pnl ]
+
+        # Check validity of parameter names in pnl variable
+        for pn in pnl:
+            if (pn.upper() not in self.PARAMS_OK) and (pn != 'all'):
+                print('WARNING:\nThe parameter `' + pn + '` is not found in the list of accepted genesis input parameters. ')
+        
+        # load the current version of the .ini file
+        with open(inputfn, 'r') as fout:
+            oldin_text = fout.readlines()
+        
+        # regex a pattern for the lines of the .in file
+        pattern = re.compile(r'(\w*)\s*(.*)',re.IGNORECASE)
+        # make a dict from in file
+        in_dict = {}
+        for ii in oldin_text:
+            s = pattern.search(str(ii))
+            try:
+                # regex group(2) will have a different interpretation based on the parameter it defines. int, float, string, list of ints/floats.
+                in_dict[str(s.group(1)).upper()] = s.group(2)
+            except AttributeError:
+                # catch exceptions to the regex pattern search+grouping
+                # this should happen only for the $newrun and $end lines of a properly written in file.
+                pass
+        
+        # if any of the parameter names are 'all' then return all parameters
+        if 'all' in pnl:
+            return list(in_dict.values())
+        else:
+            pval = []
+            keyerrmsg = in_dict[pn.upper()] + ' was not found as a parameter in the input file: ' + inputfn
+            for pn in pnl:
+                try:
+                    pval = pval + [ in_dict[pn.upper()] ]
+                except KeyError as keyerrmsg:
+                    print(keyerrmsg)
+                    break
+                
+            return pval
+
+    
+    # TODO: add make ini file? This may not be that useful...
+
     
 class ICSOut(object):
 
-    def __init__(self):
+    def __init__(self, filename=None):
         """ init class """
 
-    def load_data(self, filename):
-        """ Loads the specified file name as a pandas DF.
+        if filename:
+            self.filename = filename
+        else:
+            self.filename = ''
+
+        self.simdata = pd.DataFrame([])
+        self.ntheta = 0
+        self.nenergy = 0
+        self.ecentral = 0 # xray energy with maximum flux for angles close to axis 0.1*max(theta)
+        self.photons_per_ev = np.array([]) # xray spectrum (inegrated flux over angles)
+        self.photons_per_mrad = np.array([]) # xray angular distribution (integrated flux over energy)
+
+    def load_data(self, filename=None, mode='photon_ang_spect', verbose=False):
+        """ Loads the specified file name as a pandas DF and updats;
+        .ntheta, .nenergy 
         
         TODO:
          - make loading feature for different code calculations:
@@ -747,32 +1004,242 @@ class ICSOut(object):
 
         """
         
-        return 0
+        if mode == 'photon_ang_spect':
+            
+            if (filename == None) & (self.filename == ''):
+                outputfn = 'Graph_Angle_Spectrum2.txt'
+            elif (filename == None) & (self.filename != ''):
+                outputfn = self.filename
+            else:
+                outputfn = filename
+                self.filename = outputfn
 
-    def integrate_flux(self, anglespect, amin, amax, emin, emax):
-        """ Integrates the photon flux over angle and energy defined by the limits.
+            colnames = ['theta', 'energy', 'flux']
+            self.simdata = pd.read_csv(outputfn, 
+                    delimiter='\s+', names=colnames, skiprows=1, dtype=np.float32)
+
+            # get the header line and extract the number of points in the theta and energy mesh
+            with open(outputfn,'r') as f:
+                headerline = f.readline().split()
+            
+            if verbose:
+                print(headerline)
+
+            self.ntheta = np.float(headerline[-2])
+            self.nenergy = np.float(headerline[-1])
+
+
+        elif mode == 'energy_ang_spect':
+
+            if (filename == None) & (self.filename == ''):
+                outputfn = 'Graph_Angle_Spectrum.txt'
+            elif (filename == None) & (self.filename != ''):
+                outputfn = self.filename
+            else:
+                outputfn = filename
+                self.filename = outputfn
+
+
+            colnames = ['theta', 'energy', 'flux']
+            self.simdata = pd.read_csv(outputfn, 
+                    delimiter='\s+', names=colnames, skiprows=1, dtype=np.float32)
+
+            # get the header line and extract the number of points in the theta and energy mesh
+            with open(outputfn,'r') as f:
+                headerline = f.readline().split()
+            
+            if verbose:
+                print(headerline)
+            
+            self.ntheta = np.float(headerline[-2])
+            self.nenergy = np.float(headerline[-1])
+        
+        else:
+            print('ERROR: No simulation data loaded.')
+            print('Please specify the mode of the simulation output: {"photon_ang_spect", "energy_ang_spect"} ')
+            return 0
+
+        return 1
+
+    def integrate_flux(self, anglelims, energylims, jacobian='sphere'):
+        """ Integrates the photon/energy flux over angle and energy defined by the limits.
         multiply by the differential crosssection 
             in solid angle (2pi factor for the full phi range) 
             and energy bandwidth (1e3 factor for keV to eV conversion)
-        anglespect - df with the angle energy and photon/mrad2/eV
+        
+        self.simdata - df with the angle energy and photon/mrad^2/eV or keV/mrad^2/eV
+        anglelims - [angle_min, angle_max] integration limits for the off-axis angle
+        energylims - [energy_min, energy_max] integration limits for the photon energy
+        jacobian = 'cart', 'sphere' specifies the integration jacobian
+            if 'sphere' -> sin(theta) dtheta dphi
+            if 'cart' -> dtheta dphi (!!!not correct for most cases!!!)
         
         """
-        ntheta = anglespect.theta.nunique()
-        nenergy = anglespect.energy.nunique()
+                
+        # integrate over angles
+        spect_en = self.calc_spectrum(anglelims=anglelims,energylims=energylims, jacobian=jacobian, updateself=False)
         
-        # (mrad) differential element for integration over angle.
-        deltatheta = np.mean(np.abs( anglespect.theta.unique()[1:] - anglespect.theta.unique()[:-1] ))
-        # (kev) differential element for integration over energy
-        deltaenergy = np.mean(np.abs( anglespect.energy.unique()[1:] - anglespect.energy.unique()[:-1] ))
+        envec = spect_en[:,0]
+        spectvec = spect_en[:,1]
+
+        try:
+            # differential element vector
+            delenvec = np.abs(envec[1:] - envec[:-1])
+            delenvec = np.append(delenvec, delenvec[-1]) # make same length
         
-        angspectfilter = anglespect[
-                            (anglespect.theta >= amin) &
-                            (anglespect.theta <= amax) &
-                            (anglespect.energy >= emin) &
-                            (anglespect.energy <= emax)]
+            photonnumberinrange = np.sum(spectvec * delenvec * 1e3)
+            
+            return photonnumberinrange
+
+        except IndexError:
+            print('ERROR: Not enough resolution in energy for integration.')
+            print('integrated flux is zero')
+            return 0.0
+
+    def calc_spectrum(self, anglelims, energylims=None, jacobian='sphere',updateself=True):
+        """ Integrates the photon/energy flux over angles defined by the limits.
         
-        # integrate the flux 
-        photonnumberinrange = 2 * pc.pi * deltatheta * deltaenergy * 1e3 * angspectfilter.counts.sum()
+        multiply by the differential crosssection 
+            in solid angle (2pi factor for the full phi range) 
+            and energy bandwidth (1e3 factor for keV to eV conversion)
         
-        return photonnumberinrange, angspectfilter
+        self.simdata - df with the angle energy and photon/mrad^2/eV or keV/mrad^2/eV
+        anglelims - [angle_min, angle_max] integration limits for the off-axis angle
+        energylims=None, [energy_min, energy_max] cut-off limits for the photon energy. If `None`, no cut is made on the energy
         
+        jacobian = 'cart', 'sphere' specifies the integration jacobian
+            if 'sphere' -> sin(theta) dtheta dphi
+            if 'cart' -> dtheta dphi (!!!not correct for most cases!!!)
+        updateself - True, flag to update the self attribute photons_per_ev
+        """
+        amin, amax = anglelims
+        # apply angular cut
+        simdf_angcut = (self.simdata[
+                            (self.simdata['theta'] >= amin) 
+                            & (self.simdata['theta'] <= amax)]
+                            )
+
+        # apply energy cut if supplied and define envec
+        if energylims:
+            emin, emax = energylims
+            simdf_cut = (self.simdata
+                            [(self.simdata['energy'] >= emin) 
+                            & (self.simdata['energy'] <= emax)]
+                            )
+            envec = simdf_cut['energy'].unique()
+
+        else:
+            simdf_cut = simdf_angcut
+            envec = simdf_cut['energy'].unique()
+
+        # init output array
+        photons_sumoverangles = np.zeros( (len(envec), 2) )
+        photons_sumoverangles[:,0] = envec
+        
+        for i, en in enumerate(envec):
+
+            # theta vector
+            thvec = (simdf_cut
+                        ['theta']
+                        [simdf_cut['energy'] == en]
+                        .to_numpy()
+                        )
+            # differential element
+            delthvec = np.abs(thvec[1:] - thvec[:-1])
+            delthvec = np.append(delthvec, delthvec[-1]) # make it the same length as thvec
+
+            if jacobian == 'sphere':
+                jacobian_factor = 2 * pc.pi * np.sin(thvec) * delthvec
+            elif jacobian == 'cart':
+                jacobian_factor = 2 * pc.pi * delthvec
+            else:
+                print('WARNING! Invalid Jacobian setting provided by user. Integration will be performed with the default settin: jacobian="sphere". This setting can be changed to "cart" to remove the factor of sin(theta)')
+                jacobian_factor = 2 * pc.pi * np.sin(thvec) * delthvec
+            
+            # temp flux vector for the energy, en
+            fluxvec = simdf_cut['flux'][simdf_cut['energy'] == en]
+            
+            # sum over flux vec with the jacobian factor
+            photons_sumoverangles[i, 1] = np.sum(jacobian_factor * fluxvec)
+
+        if updateself:
+            # update .intspect
+            self.photons_per_ev = photons_sumoverangles
+
+        return photons_sumoverangles
+
+    def calc_angdist(self, energylims, anglelims=None):
+        """ Integrates the photon/energy flux over angles defined by the limits.
+        
+        multiply by the differential crosssection 
+            in solid angle (2pi factor for the full phi range) 
+            and energy bandwidth (1e3 factor for keV to eV conversion)
+        
+        self.simdata - df with the angle energy and photon/mrad^2/eV or keV/mrad^2/eV
+        anglelims - [angle_min, angle_max] integration limits for the off-axis angle
+        energylims=None, [energy_min, energy_max] cut-off limits for the photon energy. If `None`, no cut is made on the energy
+        
+        jacobian = 'cart', 'sphere' specifies the integration jacobian
+            if 'sphere' -> sin(theta) dtheta dphi
+            if 'cart' -> dtheta dphi (!!!not correct for most cases!!!)
+            
+        """
+
+
+        emin, emax = energylims
+        # apply cut on energy
+        simdf_encut = (self.simdata
+                        [(self.simdata['energy'] >= emin) 
+                        & (self.simdata['energy'] <= emax)]
+                        )
+
+        # apply angular cut if supplied and define thvec
+        if anglelims:
+            amin, amax = anglelims
+            simdf_cut = (simdf_encut
+                        ['theta']
+                        [(self.simdata['theta'] >= amin) 
+                        & (self.simdata['theta'] <= amax)]
+                        )
+            # vector of theta angles
+            thvec = simdf_cut.unique()
+
+        else:
+            simdf_cut = simdf_encut
+            thvec = simdf_cut['theta'].unique()
+
+        # init output array
+        photons_sumoverenergy = np.zeros( (len(thvec), 2) )
+        photons_sumoverenergy[:,0] = thvec
+
+        for i, th in enumerate(thvec):
+
+            # energy vector
+            envec = (simdf_cut
+                        ['energy']
+                        [simdf_cut['theta'] == th]
+                        .to_numpy()
+                        )
+            delenvec = np.abs(envec[1:] - envec[:-1])
+            delenvec = np.append(delenvec, delenvec[-1]) # make the same len as envec
+
+            # temp flux vector for theta
+            fluxvec = simdf_cut['flux'][simdf_cut['theta'] == th]
+
+            # sum over fluxvec with differential element
+            photons_sumoverenergy[i,1] = np.sum(delenvec * fluxvec)
+
+        # update .photons_per_mrad
+        self.photons_per_mrad = photons_sumoverenergy
+
+        return photons_sumoverenergy
+
+###########
+# TESTING #
+###########
+if __name__ == '__main__':
+    (
+        # no tests yet
+
+
+    )

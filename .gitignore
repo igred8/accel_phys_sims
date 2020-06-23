@@ -102,3 +102,10 @@ target/
 *.ppt
 *.pptx
 
+# genesis output files
+data/sim_out/
+*.out
+*.par
+*.fld
+*.rad
+*.w1
