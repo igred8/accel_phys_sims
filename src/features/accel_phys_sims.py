@@ -663,6 +663,7 @@ class ParticleDist():
             Updates .ebeamsdds and .ebeamnp.
             The main difference is that ICS code uses RF phase for the longitudinal coordinate and x and y positions are in centimeters.
             rffreq =None. if mode=='ics', then rffreq defines the RF frequency of the accelerating RF structure. This is left over from Parmela input into the ICS code. If .save_sdds() is called with mode='ics' and no rffreq, then the defaul tvalue of an S-band RF accelerator will be used: rffreq = 2.8559e9.
+            Column names will be changed to match ICS code.
 
         """
         if mode == 'gen':
