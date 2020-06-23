@@ -495,7 +495,7 @@ class ParticleDist():
         self.ebeamnp = np.array([])
         self.colnames = ['x', 'xp', 'y', 'yp', 't', 'p', 'particleID']
         self.collookup = {self.colnames[ii]:ii for ii in range(len(self.colnames))}
-        self.data = pd.DataFrame([])
+        self.ebeamdf = pd.DataFrame([])
 
     def load_sdds(self, sddsfilename, makedf=True):
         """ loads a SDDS file class instance for custom 6d phas-space manipulation.
@@ -509,16 +509,44 @@ class ParticleDist():
         try:
             # load the beam SDDS file
             self.ebeamsdds.load(sddsfilename)
+            # update colnames
+            self.colnames = list( self.ebeamsdds.columnName )
+            # update collookup
+            self.collookup = {self.colnames[ii]:ii for ii in range(len(self.colnames))}
             # convert to numpy array
             self.ebeamnp = np.array(self.ebeamsdds.columnData)
+
+            # add a pandas DF with the SDDS data. easier to use than np
             if makedf:
-                self.data = pd.DataFrame(self.ebeamnp, columns=self.colnames)
+                try:
+                    nsnapshots = self.ebeamnp.shape[1]
+                    colnamesdf = list(self.colnames)
+                    colnamesdf.append('snap')
+
+                    for snap in range(nsnapshots):
+                        svec = snap * np.ones((self.ebeamnp.shape[-1],1))
+                        arrtemp = np.hstack( ( np.transpose(self.ebeamnp[:,snap,:]), svec ) )
+                        dftemp = pd.DataFrame(arrtemp, columns=colnamesdf)
+                        self.ebeamdf = self.ebeamdf.append(dftemp, ignore_index=True)
+                except:
+                    print('ERROR! Conversion to pandas DF failed.')
+                    print('The numpy array in `self.ebeamnp` should still be OK.')
+                    print('Check that SDDS output is properly dimensioned.')
+                    return 1
+
+
         except FileNotFoundError:
             print(sddsfilename + ' could not be found. Please check that the file is present in the specified directory.')
+            return 1
+
+        return 0
 
     def xE_parabola(self, ascale=0.12, momres=138.5, momoffset=0.0, absx=False,zeropx=True):
         """ Creates a parabolic correlation between the x position and relative energy of the ebeam macro-particles. 
         
+        NEEDS numpy array of particle data!
+        ACTS on self.ebeamnp and self.ebeamsdds
+
         ascale - float. parabola scale
         momres - float. the resonant momentum inside the FEL
         momoffset - float. offset of the parabola. 
@@ -564,8 +592,13 @@ class ParticleDist():
         for col in self.colnames:
             self.ebeamsdds.setColumnValueLists(col, [self.ebeamnp[self.collookup[col], 0, :].tolist()] )
 
+        return 0
+
     def xE_condition(self, ascale=0.12, momres=138.5, momoffset=0.0,absx=False,zeropx=True):
         """ Creates a correlation between the x position and relative energy of the ebeam macro-particles. The formula is derived from equating the de-phasing (slippage) due to energy spread to the added path-length from the betatron oscillations in the strong FODO lattice. The equation is:
+                
+        NEEDS numpy array of particle data!
+        ACTS on self.ebeamnp and self.ebeamsdds
 
         ascale - float. parabola scale
         momres - float. the resonant momentum inside the FEL
@@ -614,29 +647,47 @@ class ParticleDist():
         for col in self.colnames:
             self.ebeamsdds.setColumnValueLists(col, [self.ebeamnp[self.collookup[col], 0, :].tolist()] )
 
+        return 0
 
-    def save_sdds(self, outputfilename, genpscale=True):
-        """ Saves the current self.ebeamsdds to SDDS file.
-        Apllies energy scaling if the distribution will be used for genesis.
-        The difference is in the transverse momentum definitions. Elegant uses x' and y' which are just angles (i.e. x' = beta_x / beta). Genesis uses the transverse momentum in units of mc (i.e. px = gamma*beta_x = p*x', where p is the elegant momentum).
+    def format_dist(self, mode='ele', rffreq=None, verbose=False):
+        """ 
+        mode - {'ele', 'gen', 'ics'}
+            self.ebeamdf is assumed to be in elegant format.
+            ACTS on self.ebeamdf.
+
+            'ele' - default. Leaves particle distribution formated for elegant use. 
+            'gen' - Apllies energy scaling to be used for genesis.
+            Updates .ebeamsdds and .ebeamnp.
+            The difference is in the transverse momentum definitions. Elegant uses x' and y' which are just angles (i.e. x' = beta_x / beta). Genesis uses the transverse momentum in units of mc (i.e. px = gamma*beta_x = p*x', where p is the elegant momentum).
+            'ics' - Converts the elegant output to 6D distribution compatible with the LLNL ICS code.
+            Updates .ebeamsdds and .ebeamnp.
+            The main difference is that ICS code uses RF phase for the longitudinal coordinate and x and y positions are in centimeters.
+            rffreq =None. if mode=='ics', then rffreq defines the RF frequency of the accelerating RF structure. This is left over from Parmela input into the ICS code. If .save_sdds() is called with mode='ics' and no rffreq, then the defaul tvalue of an S-band RF accelerator will be used: rffreq = 2.8559e9.
+
         """
-        if genpscale:
+        if mode == 'gen':
             # print('inside genpscale -----')
-            self.ebeamnp[self.collookup['xp'],0,:] = (
-                self.ebeamnp[self.collookup['p'],0,:] 
-                * self.ebeamnp[self.collookup['xp'],0,:] 
-                )
-            self.ebeamnp[self.collookup['yp'],0,:] = (
-                self.ebeamnp[self.collookup['p'],0,:] 
-                * self.ebeamnp[self.collookup['yp'],0,:]
-                )
-        # update the sdds holder for the 6D phase-space
-        for col in self.colnames:
-            self.ebeamsdds.setColumnValueLists(col, [self.ebeamnp[self.collookup[col], 0, :].tolist()] )
+            self.ebeamdf['xp'] = self.ebeamdf['p'] * self.ebeamdf['xp']
+            self.ebeamdf['yp'] = self.ebeamdf['p'] * self.ebeamdf['yp']
+            if verbose:
+                print('.ebeamdf was modified to be compatible with genesis.')
+        elif mode == 'ics':
+            # output to 6D dist for LLNL ICS code
+            # convert postion to centimeters
+            self.ebeamdf['x'] = 100.0 * self.ebeamdf['x']
+            self.ebeamdf['y'] = 100.0 * self.ebeamdf['y']
 
-        # save to outputfilename
-        self.ebeamsdds.save(outputfilename)
-
+            if rffreq is None:
+                rffreq = 2.8550e9 # Hz frequency of S-band linac
+            rfwl = pc.c / rffreq
+            self.ebeamdf['t'] = ((self.ebeamdf['t'] * pc.c / rfwl) - pc.pi) % (2*pc.pi) - pc.pi
+            self.ebeamdf = self.ebeamdf.rename(columns={'t':'phi', 
+                                                        'p':'w',
+                                                        'particleID':'particle #'})
+            if verbose:
+                print('.ebeamdf was modified to be compatible with LLNL ICS code (W. Brown).')
+            
+        return 0
     
     def create_genesis_distfile(self, sddsfilename, gendistfilename,charge=1200e-12, verbose=False):
         """ Create a distfile for genesis input from the SDDS file given in sddsfilename.
@@ -651,9 +702,12 @@ class ParticleDist():
             print('Please make a temporary empty file named `sdds_printout.txt` inside the genesis output directory.\n Sorry for inconvenience. :[ ')
             print('~~~!~!~!~~~')
             print('=== === ===')
+            return 1
+
         # these column names apply to a SDDS file that comes out of elegant
         colnamesprintout = '(p,t,x,y,xp,yp)'
         
+        # print out SDDS into a table text
         # sddsprintout command call outside py script
         cmdsddsprintout = 'sddsprintout ' + sddsfilename + ' ' + sddsprintoutFilename + ' -columns=' + colnamesprintout
         print(cmdsddsprintout)
@@ -688,11 +742,11 @@ class ParticleDist():
             print('=====')
             print('genesis 6D filename\n>>> ' + gendistfilename)
             print('\n\n==========')
+        
+        return 0
 
-
-    def create_ics_distfile(self, sddsfilename, icsdistfilename, verbose=False):
-        """ Create a distfile for genesis input from the SDDS file given in sddsfilename.
-
+    def create_ics_distfile(self, icsdistfilename, verbose=False):
+        """ 
         The LBNL ICS code takes in a particle file that is has the rows: x (cm), dx/dz (mrad), y (cm), dy/dz (mrad), phase (deg), energy (MeV)
 
         phase is the RF phase of the accelerator and it is used to specify the time of the particles as a position inside the RF wave. 
@@ -704,26 +758,30 @@ class ParticleDist():
         phi = Mod( z / wavelength_RF - pi, 2pi ) - pi
 
         """
-        # helper sddsprintout filename
-        sddsprintoutFilename = 'sdds_prinout.txt'
-        if os.path.isfile(sddsprintoutFilename):
-            pass
-        else:
-            print('=== === ===')
-            print('~~~!~!~!~~~')
-            print('Please make a temporary empty file named `sdds_printout.txt` inside the genesis output directory.\n Sorry for inconvenience. :[ ')
-            print('~~~!~!~!~~~')
-            print('=== === ===')
-        # these column names apply to a SDDS file that comes out of elegant
-        colnamesprintout = '(p,t,x,y,xp,yp)'
-        
-        # sddsprintout command call outside py script
-        cmdsddsprintout = 'sddsprintout ' + sddsfilename + ' ' + sddsprintoutFilename + ' -columns=' + colnamesprintout
-        print(cmdsddsprintout)
-        subprocess.run(cmdsddsprintout, shell=True)
+        # save the DF to file
+        coltowrite = self.ebeamdf.columns.to_list()[:-1]
+        self.ebeamdf.to_csv(icsdistfilename+'temp', sep='\t', columns=coltowrite)
+
+        # number of particles needed for ICS code header
+        numpart = self.ebeamdf[self.ebeamdf['snap']==0.0].shape[0]
 
         # open the file from which to read data
-        fh_sddsprintout = open(sddsprintoutFilename,'r')
+        fh_csvtemp = open(icsdistfilename+'temp','r')
+
+        with open(icsdistfilename, mode='w') as icsDist:
+            icsDist.write(' numbuf= {:d}\n'.format(numpart))
+            for row in fh_csvtemp:
+                icsDist.write(row) #don't need a '\n' newline here
+                
+        # close the read file
+        fh_csvtemp.close()
+
+        if verbose:
+            print('=====')
+            print('LLNL ICS code 6D filename\n>>> ' + icsdistfilename)
+            print('\n\n==========')
+
+        return 0
 
 
 #
@@ -1175,3 +1233,12 @@ class ICSOut(object):
 
         return photons_sumoverenergy
 
+###########
+# TESTING #
+###########
+if __name__ == '__main__':
+    (
+        # no tests yet
+
+
+    )
