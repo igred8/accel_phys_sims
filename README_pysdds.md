@@ -32,9 +32,9 @@ The general idea of any of the functions of the SDDS toolkit is that it should p
 
 The Python SDDS binaries aim to translate the SDDS toolkit into a pythonic mudule.
 
-!!! At the time of writing (2020.01.22) only Python 3.6 is supported. Higher versions are not yet supported. Make sure your python env is 3.6 or matching the .msi file you downloaded. !!!
+!!! At the time of writing (2020.11.19) Python 3.8 is supported. !!!
 
-1. The python library can be downloaded here: [SDDS Python3.6.msi](https://www.aps.anl.gov/Accelerator-Operations-Physics/Software#Python%20SDDS%20Binaries)
+1. The python library can be downloaded here: [SDDS Python3.8.msi](https://www.aps.anl.gov/Accelerator-Operations-Physics/Software)
 2. Run the `.msi` file and install.
    1. This will make a directory (default is `c:\Pythonxx\`) that will contain the following:
 
@@ -48,7 +48,7 @@ The Python SDDS binaries aim to translate the SDDS toolkit into a pythonic mudul
             - SDDS_demo (demo on how to use SDDS for python)
         ```
 
-   2. If Python 3.6 is indeed installed as a standalone, then the .dll, sddsdata.pyd (which is also a DLL), and the sdds.py files would be placed in the DLLs and Lib folders of the installation. However, I am using Anaconda3 as my python environment manager. This means that the DLLs and Lib folders are not found in the default path `c:\Pythonxx`.
+   2. If Python is indeed installed as a standalone, then the .dll, sddsdata.pyd (which is also a DLL), and the sdds.py files would be placed in the DLLs and Lib folders of the installation. However, I am using Anaconda3 as my python environment manager. This means that the DLLs and Lib folders are not found in the default path `c:\Pythonxx`.
        1. Copy and paste the .dll and .pyd files into the directory: `c:\Anaconda3\envs\accel_phys\DLLs\`. The generic form is `c:\Anaconda3\envs\name_of_venv\DLLs\`.
        2. Copy and paste the `sdds.py` file in the directory `c:\Anaconda3\envs\accel_phys\Lib\`. The generic form is `c:\Anaconda3\envs\name_of_venv\Lib\`.
        3. Now, it will be possible to simply `import sdds` for the venv 'accel_phys' or 'name_of_venv'.

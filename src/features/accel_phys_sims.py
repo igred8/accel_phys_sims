@@ -3,7 +3,8 @@
 # Library of functions that aim to aid access and use to elegant, genesis1.3, and ICS code. 
 # Includes particle distribution manipulation functions. 
 # Able to work with SDDS IO. 
-# Deals with the difference in particle distribution definitions between elegant and genesis.
+# Deals with the difference in particle distribution definitions between elegant, genesis, and LLNL ICS code.
+# Future work will add GPT particle distribution manipulation. 
 # 
 # ==========
 
@@ -497,7 +498,7 @@ class ParticleDist():
         self.collookup = {self.colnames[ii]:ii for ii in range(len(self.colnames))}
         self.ebeamdf = pd.DataFrame([])
 
-    def load_sdds(self, sddsfilename, makedf=True):
+    def load_sdds(self, sddsfilename, makedf=True, code='elegant'):
         """ loads a SDDS file class instance for custom 6d phas-space manipulation.
         sddsfilename - str. path of the sdds file being loaded. Can be an absolute path or just the filename if the current working directory contains the file.
 
@@ -518,23 +519,57 @@ class ParticleDist():
 
             # add a pandas DF with the SDDS data. easier to use than np
             if makedf:
-                try:
-                    nsnapshots = self.ebeamnp.shape[1]
-                    colnamesdf = list(self.colnames)
-                    colnamesdf.append('snap')
+                if code == 'elegant':
+                    try:
+                        nsnapshots = self.ebeamnp.shape[1]
+                        colnameslist = list(self.colnames)
+                        colnameslist.append('snap')
 
-                    for snap in range(nsnapshots):
-                        svec = snap * np.ones((self.ebeamnp.shape[-1],1))
-                        arrtemp = np.hstack( ( np.transpose(self.ebeamnp[:,snap,:]), svec ) )
-                        dftemp = pd.DataFrame(arrtemp, columns=colnamesdf)
-                        self.ebeamdf = self.ebeamdf.append(dftemp, ignore_index=True)
-                except:
+                        for snap in range(nsnapshots):
+                            svec = snap * np.ones((self.ebeamnp.shape[-1],1))
+                            arrtemp = np.hstack( ( np.transpose(self.ebeamnp[:,snap,:]), svec ) )
+                            dftemp = pd.DataFrame(arrtemp, columns=colnameslist)
+                            self.ebeamdf = self.ebeamdf.append(dftemp, ignore_index=True)
+                    except:
+                        print('ERROR! Conversion to pandas DF failed.')
+                        print('The numpy array in `self.ebeamnp` should still be OK.')
+                        print('Check that SDDS output is properly dimensioned.')
+                        return 1
+                elif code == 'gpt':
+                    # print('hello')
+                    try:
+                        nsnapshots = self.ebeamnp.shape[1]
+                        colnameslist = list(self.colnames)
+                        colnameslist.append('snap')
+                        ncols = len(colnameslist)
+
+                        for snap in range(nsnapshots):
+                            
+                            nparticles = len(self.ebeamnp[0,snap])
+                            # print(nparticles)
+                            # print(snap)
+                            # print('---')
+                            svec = snap * np.ones(nparticles)
+                            arrtemp = np.zeros([nparticles,ncols])
+                            
+                            for j,col in enumerate(colnameslist):
+                                if col == 'snap':
+                                    arrtemp[:,j] = svec
+                                else:
+                                    arrtemp[:,j] = np.array(self.ebeamnp[j,snap])
+
+                            dftemp = pd.DataFrame(arrtemp, columns=colnameslist)
+                            self.ebeamdf = self.ebeamdf.append(dftemp, ignore_index=True)
+                    except:
+                        print('ERROR! Conversion to pandas DF failed.')
+                        print('The numpy array in `self.ebeamnp` should still be OK.')
+                        print('Check that SDDS output is properly dimensioned.')
+                        return 1
+                else:
                     print('ERROR! Conversion to pandas DF failed.')
                     print('The numpy array in `self.ebeamnp` should still be OK.')
-                    print('Check that SDDS output is properly dimensioned.')
+                    print('The variable `code` must be one of the following: ["elegant","gpt"]')
                     return 1
-
-
         except FileNotFoundError:
             print(sddsfilename + ' could not be found. Please check that the file is present in the specified directory.')
             return 1
@@ -675,13 +710,21 @@ class ParticleDist():
         elif mode == 'ics':
             # output to 6D dist for LLNL ICS code
             # convert postion to centimeters
-            self.ebeamdf['x'] = 100.0 * self.ebeamdf['x']
-            self.ebeamdf['y'] = 100.0 * self.ebeamdf['y']
+            self.ebeamdf['x'] = 1.0e2 * self.ebeamdf['x']
+            self.ebeamdf['y'] = 1.0e2 * self.ebeamdf['y']
+            # convert angle to mrad
+            self.ebeamdf['xp'] = 1.0e3 * self.ebeamdf['xp']
+            self.ebeamdf['yp'] = 1.0e3 * self.ebeamdf['yp']
+            
+            # electron mass
+            mc2 = 1e-6 * (pc.m_e*pc.c**2)/pc.elementary_charge # MeV
+            # convert to energy
+            self.ebeamdf['p'] = mc2 * np.sqrt(1 + self.ebeamdf['p']**2) 
 
             if rffreq is None:
                 rffreq = 2.8550e9 # Hz frequency of S-band linac
             rfwl = pc.c / rffreq
-            self.ebeamdf['t'] = ((self.ebeamdf['t'] * pc.c / rfwl) - pc.pi) % (2*pc.pi) - pc.pi
+            self.ebeamdf['t'] = (180.0 / pc.pi) * ( ((2*pc.pi*self.ebeamdf['t'] * pc.c / rfwl) - pc.pi) % (2*pc.pi) - pc.pi)
             self.ebeamdf = self.ebeamdf.rename(columns={'t':'phi', 
                                                         'p':'w',
                                                         'particleID':'particle #'})
@@ -850,8 +893,8 @@ class ICSControl():
             'pvalue' type depends on the type that is expected by the parameter as per the LLNL input file.
                 'pvalue' can be set to 'delete' in order to remove the parameter
 
-        This feature is best suited for setting new values of parameters on the fly and executing genesis with them. For example, you would like to run a script that scans multiple genesis parameters.
-        If you are setting up a new genesis simulation after creating a template input file with `makeinfile()`, it could be more straight forward to open the .in file in a text editor and make your changes there. 
+        This feature is best suited for setting new values of parameters on the fly and executing the ICS code with them. For example, you would like to run a script that scans multiple ICS parameters.
+        If you are setting up a new ICS simulation after creating a template input file with `makeinfile()`, it could be more straight forward to open the .in file in a text editor and make your changes there. 
         """
 
         # Check validity of parameter names in pnv variable
