@@ -1,23 +1,22 @@
-elegenapi
+Accelerator Physics Simulations API
 ==============================
 
-Python based functionality that handles interaction of elegant and genesis along with particle distribution manipulations.
+Python based functionality that handles the control and interaction of some commonly used numerical simulation tools for particle accelerator physics.
+
+The library has the ability to:
+ - run elegant, genesis1.3, ICS code from LLNL, and GPT (future) from inside jupyter notebooks or python scripts
+ - load SDDS files from elegant and ones produced by GPT (using `gdf2sdds`)
+ - manipulate 6D particle distributions and handle I/O
+
+See other readme files for details on setup and use.
 
 Project Organization
 ------------
 
     ├── LICENSE
-    ├── Makefile           <- Makefile with commands like `make data` or `make train`
     ├── README.md          <- The top-level README for developers using this project.
     ├── data
-    │   ├── external       <- Data from third party sources.
-    │   ├── interim        <- Intermediate data that has been transformed.
-    │   ├── processed      <- The final, canonical data sets for modeling.
-    │   └── raw            <- The original, immutable data dump.
-    │
-    ├── docs               <- A default Sphinx project; see sphinx-doc.org for details
-    │
-    ├── models             <- Trained and serialized models, model predictions, or model summaries
+    │   └── sim_out        <- Output data from simulations. Subfolders by date sim was run.
     │
     ├── notebooks          <- Jupyter notebooks. Naming convention is a number (for ordering),
     │                         the creator's initials, and a short `-` delimited description, e.g.
@@ -35,22 +34,10 @@ Project Organization
     ├── src                <- Source code for use in this project.
     │   ├── __init__.py    <- Makes src a Python module
     │   │
-    │   ├── data           <- Scripts to download or generate data
-    │   │   └── make_dataset.py
     │   │
-    │   ├── features       <- Scripts to turn raw data into features for modeling
+    │   ├── features       <- Python libraries to turn simulation data into features for modeling
     │   │   └── build_features.py
-    │   │
-    │   ├── models         <- Scripts to train models and then use trained models to make
-    │   │   │                 predictions
-    │   │   ├── predict_model.py
-    │   │   └── train_model.py
-    │   │
-    │   └── visualization  <- Scripts to create exploratory and results oriented visualizations
-    │       └── visualize.py
-    │
-    └── tox.ini            <- tox file with settings for running tox; see tox.testrun.org
-
+    
 
 --------
 
