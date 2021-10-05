@@ -9,10 +9,12 @@
 2. In order to reproduce the python settings used for the development of custom libraries related to accelerator physics and such.
     - You can use a terminal to create the environment:
         
-        `$ conda create --name <env> --file <this file>`
+        `$ conda create --name accel_phys_38 --file accel_phys_38.yml`
+      - Refer to this [cheat sheet](https://docs.conda.io/projects/conda/en/latest/_downloads/843d9e0198f2a193a3484886fa28163c/conda-cheatsheet.pdf)
+
 
     - The same thing can be done inside Anaconda Navigator's graphical interface. Use the "Import" feature.
-    - Inside Anaconda Navigator, import the python environment by using the `spec-list` file. The file is output by Anaconda and looks like this:
+    - Inside Anaconda Navigator, import the python environment by using the `accel_phys_38.yml` file. The file is output by Anaconda looks like this:
     ```
         # This file may be used to create an environment using:
         # $ conda create --name <env> --file <this file>
